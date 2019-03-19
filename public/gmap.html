@@ -1,0 +1,410 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+<meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+<meta http-equiv="content-type" content="text/html; charset=UTF-8"/>
+<title>Google Maps</title>
+<!--[if IE]>
+    <script src="http://html5shim.googlecode.com/svn/trunk/html5.js"></script>
+<![endif]-->
+<style type="text/css">
+  html { height: 100% }
+  body { height: 100%; margin: 0px; padding: 0px }
+  #map_canvas { height: 100% }
+</style>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js"></script>
+<!--script type="text/javascript" src="http://maps.google.com/maps/api/js?v=3&sensor=false"></script-->
+<script type="text/javascript" src="http://maps.google.com/maps/api/js?v=quarterly&sensor=false&key=AIzaSyD0pjXHS1jMgahyg9tuN65O3zXOIh7V9Ao"></script>
+<script>
+function fnObjNotDefine(){
+    domethod();
+}
+
+function fnOnError(msg,url,lineno){
+    //<!--
+    //alert("window.onerror\n\n" +
+    //"Error: " + msg + "\n" +
+    //"URL:  " + url + "\n" +
+    //"Line:  " + lineno);
+    //return true; -->
+}
+window.onerror = fnOnError;
+
+</script>
+<script type="text/javascript">
+	var map;
+	var panorama;
+	var aitmarker,image;
+	var poly;
+	var path;
+	var polyDrived, pathDrived;
+
+	var file_poly_array = [];
+	var file_path_array = [];	
+	var file_poly_idx   = 0;	
+	
+	var arrayMarkers = [];
+	var cur_marker = new google.maps.Marker({
+			map: null
+		});;
+	
+	var coordInfoWindow = new google.maps.InfoWindow();
+	
+	var snappedCoordinates = [];
+	//var apiKey = 'AIzaSyA7YvckpXhwpYA-SWw8B2vLgBlqhvZP99c';
+    var apiKey = 'AIzaSyBeDlqxo-bqr5QXW8fe5X1FOFWDjynVsMA';
+    
+    var mySocket;
+    var lastPosTime = null;
+
+    function initialize() {
+        var carLatLng = new google.maps.LatLng(24.827988,121.010149);
+        //var carLatLng = new google.maps.LatLng(35.6799,139.7708); //TOKYO 
+
+        if(window.navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(function(position) {
+              carLatLng = new google.maps.LatLng(position.coords.latitude, position.coords.longitude);
+            }, function() {
+           });     
+       }
+ //     else
+ //     {
+//            alert("Not support geolocation!!");
+//      } 
+  
+		var mapOptions = {
+		  center: carLatLng,
+		  zoom: 15,
+		  mapTypeId: google.maps.MapTypeId.ROADMAP
+		};
+		map = new google.maps.Map(document.getElementById("map_canvas"), mapOptions);
+
+		//var image = 'http://maps.google.com/mapfiles/kml/shapes/horsebackriding.png';
+        var image ='gmap_ufo.png'
+        //var image ='file:///D:/Projects/ezTour/itm/IMAG1525.jpg'
+		//---------------------------------------------------------
+
+		aitmarker = new google.maps.Marker({
+			position: carLatLng,
+			map: map,
+			icon: image,
+			title:""
+		});
+
+        //---------------------------------------------------------
+		var polyOptions = {
+		    strokeColor: '#8833FF',
+		    strokeOpacity: 0.5,
+		    strokeWeight: 6
+		}
+
+		poly = new google.maps.Polyline(polyOptions);
+		poly.setMap(map);
+		path = poly.getPath();
+		//---------------------------------
+		var polyDrivedOptions = {
+		    strokeColor: '#55EE55',
+		    strokeOpacity: 0.5,
+		    strokeWeight: 6
+		}
+
+		polyDrived = new google.maps.Polyline(polyDrivedOptions);
+		polyDrived.setMap(map);
+		pathDrived = polyDrived.getPath();
+
+		google.maps.event.addListener(coordInfoWindow, 'closeclick', function() {
+		    if(cur_marker.getMap())
+		    {
+		        cur_marker.setAnimation(null);
+		        cur_marker.setIcon('http://maps.google.com/mapfiles/ms/icons/red-dot.png');
+		    }
+        });
+        
+        initWebSocket();
+    }
+
+    function initWebSocket() {
+        mySocket = new WebSocket("ws://iot.cht.com.tw:80/iot/ws/rawdata");
+        
+        mySocket.onopen = function(ev) {
+            mySocket.send('{"ck":"DKKY3FPE9ZKM9ZSE7R","resources":["/v1/device/11798538376/sensor/Tracker_867726030099859/rawdata"]}');
+        }
+        mySocket.onmessage = function(ev) {
+            let data = JSON.parse(ev.data);
+
+            if(lastPosTime == null || lastPosTime != data.time) {
+                lastPosTime = data.time;
+                path_plot_poi(data.lat, data.lon, data.time);
+                movpos(data.lat, data.lon);
+            }
+        }
+    }
+
+    function getRandomColor() {
+        function c() {
+            return (Math.floor(Math.random()*16)*12).toString(16)
+        }
+        return "#"+c()+c()+c();
+    }
+
+    function draw_file_path_begin() {
+    
+        var polyOptions = {
+            strokeOpacity: 0.5,
+            strokeWeight: 6
+        }
+        
+        polyOptions.strokeColor = getRandomColor();
+
+        file_poly_array[file_poly_idx] = new google.maps.Polyline(polyOptions);
+        file_poly_array[file_poly_idx].setMap(map);
+        file_path_array[file_poly_idx] = file_poly_array[file_poly_idx].getPath();
+    }
+
+    function draw_file_path_plot(x, y) {
+        var pos = new google.maps.LatLng(x, y);
+        file_path_array[file_poly_idx].push(pos);
+    }
+    
+    function draw_file_path_poi(x, y, timestamp, image) {
+        var pos = new google.maps.LatLng(x, y);
+        
+        var marker = new google.maps.Marker({
+			position: pos,
+			map: map,
+			title: timestamp,
+			icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
+		});
+				
+		google.maps.event.addListener(marker, 'click', function() {
+		    if(cur_marker.getMap())
+		    {
+		        cur_marker.setAnimation(null);
+		        cur_marker.setIcon('http://maps.google.com/mapfiles/ms/icons/red-dot.png');
+		    }
+//		    var coordInfoWindow = new google.maps.InfoWindow();
+ //           coordInfoWindow.setContent(createInfoWindowContent(marker));
+ //           coordInfoWindow.setPosition(marker.getPosition());
+            if(image)
+            {
+                coordInfoWindow = new google.maps.InfoWindow({
+                    content: "<div><img width='64' height='64' src='" + image + "'><br>" + 
+                    marker.title + "<br>" + 
+                    marker.getPosition().lat().toFixed(6) + ' , ' + marker.getPosition().lng().toFixed(6) + "<br></div>"
+                });
+            }
+            else
+            {
+                coordInfoWindow.setContent(createInfoWindowContent(marker));
+            } 
+            coordInfoWindow.open(marker.get('map'), marker);
+            marker.setIcon('http://maps.google.com/mapfiles/ms/icons/purple-dot.png');
+            marker.setAnimation(google.maps.Animation.BOUNCE);
+            cur_marker = marker;
+		});
+		
+		arrayMarkers.push(marker);
+    }
+
+    function draw_file_path_end() {
+        file_poly_idx = file_poly_idx + 1;
+    }
+
+    function draw_file_path_clear_all() {
+        var i;
+        // Clear points
+        for (i = 0; i < file_path_array.length; i++) {
+            while (file_path_array[i].removeAt(0));
+            file_poly_array[i] = null;
+            file_path_array[i] = null;            
+        }
+        // clear array
+        file_poly_array.splice(0, file_poly_array.length);
+        file_path_array.splice(0, file_path_array.length);
+        file_poly_idx = 0;
+        
+        while(arrayMarkers.length)
+            arrayMarkers.pop().setMap(null); 
+    }
+
+	function movpos(x,y){
+	  var pos = new google.maps.LatLng(x,y);
+	  map.setCenter(pos);
+	  aitmarker.setPosition(pos);
+	  //pathDrived.push(pos);	  
+      //aitmarker.setTitle("x");
+    }
+
+	function set_center(x,y){
+	  var pos = new google.maps.LatLng(x, y);
+	  map.panTo(pos);
+    }
+
+    function path_plot(x, y) {
+        var pos = new google.maps.LatLng(x, y);
+        var path = poly.getPath();
+        //plot_count = plot_count + 1;
+        path.push(pos);
+    }
+
+    function path_plot_poi(x, y, timestamp) {
+        var pos = new google.maps.LatLng(x, y);
+        var path = poly.getPath();
+        path.push(pos);
+
+        var marker = new google.maps.Marker({
+			position: pos,
+			map: map,
+			title: timestamp,
+			icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
+		});
+				
+		google.maps.event.addListener(marker, 'click', function() {
+		    if(cur_marker.getMap())
+		    {
+		        cur_marker.setAnimation(null);
+		        cur_marker.setIcon('http://maps.google.com/mapfiles/ms/icons/red-dot.png');
+		    }
+
+            coordInfoWindow.setContent(createInfoWindowContent(marker));
+            coordInfoWindow.open(marker.get('map'), marker);
+            marker.setIcon('http://maps.google.com/mapfiles/ms/icons/purple-dot.png');
+            marker.setAnimation(google.maps.Animation.BOUNCE);
+            cur_marker = marker;
+		});
+		
+		arrayMarkers.push(marker);
+    }
+
+    function path_delete() {
+        var path = poly.getPath();
+        while (path.removeAt(0));
+        while(arrayMarkers.length)
+            arrayMarkers.pop().setMap(null);
+    }
+
+    function createInfoWindowContent(marker) {
+        return [
+//        'Index:' + marker.getZIndex(),
+        'LatLng: ' + marker.getPosition().lat().toFixed(6) + ' , ' + marker.getPosition().lng().toFixed(6),
+        'UTC: ' + marker.getTitle()
+        ].join('<br>');
+    }
+
+    function pathdrived_plot(x, y, timestamp, image) {
+        var pos = new google.maps.LatLng(x, y);
+        var pathDrived = polyDrived.getPath();
+        pathDrived.push(pos);
+       
+        var marker = new google.maps.Marker({
+			position: pos,
+			map: map,
+			title: timestamp,
+			icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
+		});
+/* 				
+		google.maps.event.addListener(marker, 'click', function() {
+		    if(cur_marker.getMap())
+		    {
+		        cur_marker.setAnimation(null);
+		        cur_marker.setIcon('http://maps.google.com/mapfiles/ms/icons/red-dot.png');
+		    }
+//		    var coordInfoWindow = new google.maps.InfoWindow();
+            coordInfoWindow.setContent(createInfoWindowContent(marker));
+ //           coordInfoWindow.setPosition(marker.getPosition());
+            
+            coordInfoWindow.open(marker.get('map'), marker);
+            marker.setIcon('http://maps.google.com/mapfiles/ms/icons/purple-dot.png');
+            marker.setAnimation(google.maps.Animation.BOUNCE);
+            cur_marker = marker;
+		});
+		
+		arrayMarkers.push(marker);
+*/
+    }
+
+    function pathdrived_delete() {
+ //       for (var i = 0; i < arrayMarker.length; i++ ) {
+ //           arrayMarker[i].setMap(null);
+ //       }
+ //       arrayMarker.length = 0;
+        while(arrayMarkers.length)
+            arrayMarkers.pop().setMap(null); 
+        
+        var pathDrived = polyDrived.getPath();
+        while (pathDrived.removeAt(0));
+    }
+
+    function pathdrived_plot_to_n(n) {
+        var path = poly.getPath();
+        var pathDrived = polyDrived.getPath();        
+        pathdrived_delete();
+
+        for (var i = 0; i < n; i++) 
+        {
+            var pos = path.getAt(i);
+            pathDrived.push(pos);
+        }
+    }
+    
+function pathdrived_fit() {
+	runSnapToRoad();
+}
+
+		// Snap a user-created polyline to roads and draw the snapped path
+function runSnapToRoad() {
+  var path = polyDrived.getPath();
+  var pathValues = [];
+  
+  for (var i = 0; i < path.getLength(); i++) {
+    pathValues.push(path.getAt(i).toUrlValue());
+  }
+
+  $.get('https://roads.googleapis.com/v1/snapToRoads', {
+    interpolate: false,
+    key: apiKey,
+    path: pathValues.join('|')
+  }, function(data) {
+    processSnapToRoadResponse(data);
+    drawSnappedPolyline();
+    //getAndDrawSpeedLimits();
+  });
+}
+
+// Store snapped polyline returned by the snap-to-road service.
+function processSnapToRoadResponse(data) {
+  snappedCoordinates = [];
+  //placeIdArray = [];
+  for (var i = 0; i < data.snappedPoints.length; i++) {
+    var latlng = new google.maps.LatLng(
+        data.snappedPoints[i].location.latitude,
+        data.snappedPoints[i].location.longitude);
+    snappedCoordinates.push(latlng);
+    //placeIdArray.push(data.snappedPoints[i].placeId);
+    var marker = new google.maps.Marker({
+			position: latlng,
+			map: map,
+			icon: 'http://maps.google.com/mapfiles/ms/icons/blue-dot.png'
+		});
+  }
+}
+
+// Draws the snapped polyline (after processing snap-to-road response).
+function drawSnappedPolyline() {
+  var snappedPolyline = new google.maps.Polyline({
+    path: snappedCoordinates,
+    strokeColor: 'black',
+    strokeWeight: 3
+  });
+
+  snappedPolyline.setMap(map);
+  //polylines.push(snappedPolyline);
+}
+
+</script>
+</head>
+<body onload="initialize()">
+  <div id="map_canvas" style="width:100%; height:100%"></div>
+</body>
+</html>

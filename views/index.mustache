@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>{{title}}</title>
+    <!--meta http-equiv="refresh" content="10"-->
+  </head>
+  <body>
+    <script type="text/javascript">
+      var ws = new WebSocket('ws://iot.cht.com.tw:80/iot/ws/rawdata');
+      ws.onmessage = function(message) {alert(message.data);ws.close()};
+      ws.send('Hello WebSocket.');
+    </script>
+  </body>
+</html>
